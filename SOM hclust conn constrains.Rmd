@@ -1,0 +1,218 @@
+---
+title: "Developing SOM + Hierarchical Clustering + Connectivity Constrains"
+author: "OEB"
+date: "June 29, 2017"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: 
+      collapsed: false
+      smooth_scroll: false
+    number_sections: true
+    theme: sandstone
+    df_print: kable  
+    code_folding: show 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = F)
+```
+
+# Scope
+
+Self-Organizing Maps(SOM) are widely used for customer and gene clustering. Solutions in R are not very accessible due to lack of documentation and inefficient clustering methods that do not lead to connected clusters on the SOM. We will try to develop a generic method that allows clustering of any dataset with contineous and categorical variables and results in connected clusters on the SOM.
+
+
+# Background
+
+Self organizing maps area great way to organize your multidimensional dataset in a two dimensional space using a neural network.
+
+The concept on how that works is best explained in those two videos
+
+- [Video 1](https://www.youtube.com/watch?v=HKj2ASG0DKQ#t=476.297807)  
+- [video 2](https://www.youtube.com/watch?v=wRcnNyoXm_M#t=699.986893)
+
+# Present R implementation and Ressources
+
+To my knowledge the `kohonen` package is the best developed R package implementing the SOM algorithm. There is another package called `som` but the reference manual on cran dates back to [June 2016](https://cran.r-project.org/web/packages/som/index.html), while the documentation for the `kohonen` package was updated in [March 2017](https://cran.r-project.org/web/packages/kohonen/index.html). Both packages do not come with a vignette but an in-depth [blog post](https://www.r-bloggers.com/self-organising-maps-for-customer-segmentation-using-r/
+http://en.proft.me/2016/11/29/modeling-self-organising-maps-r/) on the functionalities of the `kohonen` package is available. 
+  
+We therefore will focus on the `kohonen` package  
+
+# Difficulties
+
+The [blog post](https://www.r-bloggers.com/self-organising-maps-for-customer-segmentation-using-r/
+http://en.proft.me/2016/11/29/modeling-self-organising-maps-r/) does not explain how to implement categorical data. The method of clustering of the SOM also leads to unconnected clusters.
+
+# Approach
+
+We will work with the `kohonen` package documentation in order to get it to work for mixed (contineous and categorical) datasets. 
+
+```{r packages}
+require(tidyverse)
+
+setwd("C:/Users/erbla/OneDrive/R/SOM")
+
+source('hclust R Version.R')
+
+# Colour palette definition
+pretty_palette <- c("#1f77b4", '#ff7f0e', '#2ca02c','#d62728', '#9467bd', '#8c564b', '#e377c2')
+
+```
+
+
+## Data Preparation
+
+The `kohonen::supersom` accepts multilayered datasets, a named `list` in which each element consists of a `matrix` with an equal number of observations(rows).  The function lets us specify which layer to include and lets us chose difference distance measures for each layer.
+
+We further find the function `kohonen::classvec2classmat` and `kohonen::classmat2classvec` which turns a factor column vector into a class matrix and vice versa. Differently from functions that convert a factor column vector into dummy variables, this function adds a single binary column per factor level.
+
+Hence we will convert our dataframe int a named list creating an extra layer for each factor variable. We will use euclidean distance for contineous data and tanimato distance for the factor layers.
+
+
+```{r data_prep}
+
+
+data = ISLR::Auto %>%
+  select(-name) %>%
+  mutate(origin = as.factor(origin) )
+
+# prepare data
+
+numerics = summarise_all( data, is.numeric ) %>%
+  as.logical()
+
+factors = names(data)%>%
+  .[!numerics]
+
+numerics = names(data)%>%
+  .[numerics]
+
+
+fct_to_matrix = function(data, factor_vec){
+  
+  name = names(factor_vec)
+  
+  mat = kohonen::classvec2classmat( factor_vec )
+  
+  names(mat) = name
+  
+  return(mat)
+  
+}
+
+data_list = list()
+distances = vector()
+
+for (fac in factors){
+  
+  data_list[[fac]] = kohonen::classvec2classmat( data[[fac]] )
+  
+  distances = c(distances, 'tanimoto')
+  
+}
+
+data_list[['numerics']] = scale(data[,numerics])
+distances = c( distances, 'euclidean')
+
+str(data_list)
+
+names(data_list)
+distances
+```
+
+## SOM
+
+```{r som, dependson = 'data_prep'}
+
+# create a grid onto which the som will be mapped
+# we might want to change map dimension in future versions
+
+som_grid = kohonen::somgrid(xdim = 5
+                            , ydim=5
+                            , topo="hexagonal")
+
+
+
+m = kohonen::supersom( data_list
+                 , grid=som_grid
+                 , rlen=35
+                 , alpha = 0.05
+                 , whatmap = c(factors, 'numerics')
+                 , dist.fcts = distances
+                 #, maxNA.fraction = .5
+                  )
+
+
+
+plot(m, type="changes")
+
+plot(m, type="counts")
+
+plot(m, type="dist.neighbours")
+
+plot(m, type="codes")
+
+plot(m, type="quality")
+
+
+
+```
+
+
+# Hierarchical Clustering with Connectivity Constain
+
+In order to implement connectivity constrains we have to set the distance of all non neigbouring clusters on the map to infinity. The hierachical clustering algorithm finds the two cluster on the map which have the lowest distance and fuses them, thus creating a new cluster. We will then have to correct the distance  
+
+***...do not actually understand this yet ***  
+
+
+
+The original `stats::hclust` function has been written in Fortran. It has however been translated into R Code by bwlewis on [github](https://github.com/bwlewis/hclust_in_R/blob/master/hc.R). Which we will try to manipulate
+
+
+
+```{r clust, eval = T}
+
+# fuse all layers into one dataframe
+codes = tibble( layers = names(m$codes)
+                ,codes = m$codes ) %>%
+  mutate( codes = purrr::map(codes, as_tibble) ) %>%
+  spread( key = layers, value = codes) %>%
+  apply(1, bind_cols) %>%
+  .[[1]] %>%
+  as_tibble()
+  
+# generate distance matrix for codes
+dist_m = dist(codes) %>%
+  as.matrix()
+
+# generate seperate distance matrix for map location
+
+map_dimension = 5
+
+dist_on_map = tibble( r   = rep(1:map_dimension, map_dimension)
+                      , c = rep(1:map_dimension, map_dimension) %>% sort() ) %>%  
+              dist() %>%
+              as.matrix()
+
+dist_adj = dist_m * dist_on_map
+
+clust = hc(dist_adj, 'average')
+clust_norm = hclust(as.dist(dist_m), 'average')
+
+
+plot(clust)
+plot(clust_norm)
+
+som_cluster = cutree(clust, 4)
+plot(m, type="mapping", main = "Clusters", bgcol = pretty_palette[som_cluster])
+
+
+som_cluster = cutree(clust_norm, 4)
+plot(m, type="mapping", main = "Clusters", bgcol = pretty_palette[som_cluster])
+
+
+```
+

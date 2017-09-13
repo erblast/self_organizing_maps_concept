@@ -1,0 +1,8 @@
+name: Publish Document
+title:
+account: rpubs
+server: rpubs.com
+appId: https://api.rpubs.com/api/v1/document/289123/4e393b35563743b3927d60fee57b707e
+bundleId: https://api.rpubs.com/api/v1/document/289123/4e393b35563743b3927d60fee57b707e
+url: http://rpubs.com/erblast/289123
+when: 1504759909.55969
